@@ -30,6 +30,9 @@ from ryu.lib.packet import arp
 from ryu.lib.packet import ipv4
 from ryu.lib.packet import ipv6
 from ryu import utils
+from ryu.topology import event, switches
+from ryu.topology.api import get_switch, get_link
+import copy
 
 
 class MULTIPATH_13(app_manager.RyuApp):
@@ -41,6 +44,10 @@ class MULTIPATH_13(app_manager.RyuApp):
         self.mac_to_port = {}
         self.datapaths = {}
         self.FLAGS = True
+        #self.topology_api_app = self
+        self.topo_switches = []
+        self.topo_links = []
+
 
     @set_ev_cls(
         ofp_event.EventOFPErrorMsg,
@@ -141,7 +148,6 @@ class MULTIPATH_13(app_manager.RyuApp):
 
     def mac_learning(self, dpid, src_mac, in_port):
         self.mac_to_port.setdefault(dpid, {})
-        self.arp_table.setdefault(ip, {})
         if src_mac in self.mac_to_port[dpid]:
             if in_port != self.mac_to_port[dpid][src_mac]:
                 return False
@@ -149,14 +155,6 @@ class MULTIPATH_13(app_manager.RyuApp):
             self.mac_to_port[dpid][src_mac] = in_port
             return True
 
-    def ip_learning(self, ip, mac):
-        self.arp_table.setdefault(ip, {})
-        if not mac in arp_table:
-            self.logger.debug('register ip: %016x', ip)
-            self.arp_table[ip] = mac
-            return False
-        else
-            return True
 
 
     def send_group_mod(self, datapath,):
@@ -213,11 +211,17 @@ class MULTIPATH_13(app_manager.RyuApp):
                 self.logger.debug("ARP packet enter in different ports")
                 return
 
-            if self.ip_learning(arp_pkt.src_ip, eth.src) is True
-                    #ECMP
-            else
-                self.logger.debug("src unknown")
+            self.arp_table.setdefault(arp_pkt.src_ip, {})
+            if not eth.src in self.arp_table[arp_pkt.src_ip]:
+                self.logger.debug('register ip: %016x', arp_pkt.src_ip)
+                self.arp_table[arp_pkt.src_ip] = eth.src
+                print(self.arp_table[arp_pkt.src_ip]+" aggiunto")
                 return
+            else:
+                #print(self.switches)
+                #print(self.get_link)
+                return
+
 
 
             self.arp_forwarding(msg, arp_pkt.src_ip, arp_pkt.dst_ip, eth)
@@ -255,3 +259,18 @@ class MULTIPATH_13(app_manager.RyuApp):
                     return
                 else:
                     self.flood(msg)
+    @set_ev_cls(event.EventSwitchEnter)
+    def handler_switch_enter(self, ev):
+        self.topo_switches = copy.copy(get_switch(self, None))
+        self.topo_links = copy.copy(get_link(self, None))
+
+        print(" \t" + "Current Links:")
+        for l in self.topo_links:
+            print (" \t\t" + str(l))
+
+        print(" \t" + "Current Switches:")
+        for s in self.topo_switches:
+            print (" \t\t" + str(s))
+
+
+
