@@ -37,7 +37,7 @@ class MULTIPATH_13(app_manager.RyuApp):
 
     def __init__(self, *args, **kwargs):
         super(MULTIPATH_13, self).__init__(*args, **kwargs)
-        self.arp_table {}
+        self.arp_table = {}
         self.mac_to_port = {}
         self.datapaths = {}
         self.FLAGS = True
@@ -141,6 +141,7 @@ class MULTIPATH_13(app_manager.RyuApp):
 
     def mac_learning(self, dpid, src_mac, in_port):
         self.mac_to_port.setdefault(dpid, {})
+        self.arp_table.setdefault(ip, {})
         if src_mac in self.mac_to_port[dpid]:
             if in_port != self.mac_to_port[dpid][src_mac]:
                 return False
@@ -148,15 +149,11 @@ class MULTIPATH_13(app_manager.RyuApp):
             self.mac_to_port[dpid][src_mac] = in_port
             return True
 
-    def manage_arp_table(self, ip, mac=None):
-        if mac == None
-            if not ip in arp_table:
-                return False
-            else
-                return True
-        elif not ip in arp_table:
+    def ip_learning(self, ip, mac):
+        self.arp_table.setdefault(ip, {})
+        if not mac in arp_table:
             self.logger.debug('register ip: %016x', ip)
-            self.arp_table[mac] = ip
+            self.arp_table[ip] = mac
             return False
         else
             return True
@@ -216,12 +213,8 @@ class MULTIPATH_13(app_manager.RyuApp):
                 self.logger.debug("ARP packet enter in different ports")
                 return
 
-            if self.manage_arp_table(arp_pkt.src_ip, eth.src) is True
-                if self.manage_arp_table(arp_pkt.dst_ip, None) is True
+            if self.ip_learning(arp_pkt.src_ip, eth.src) is True
                     #ECMP
-                else
-                    self.logger.debug("dst unknown")
-                    return
             else
                 self.logger.debug("src unknown")
                 return
