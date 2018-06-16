@@ -1,4 +1,4 @@
-# Copyright (C) 2011 Nippon Telegraph and Telephone Corporation.
+# Copyright (C) 2016 Nippon Telegraph and Telephone Corporation.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -13,43 +13,49 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""
-An OpenFlow 1.0 L2 learning switch implementation.
-"""
-
-
 from ryu.base import app_manager
 from ryu.controller import ofp_event
-from ryu.controller.handler import MAIN_DISPATCHER
+from ryu.controller.handler import CONFIG_DISPATCHER, MAIN_DISPATCHER
 from ryu.controller.handler import set_ev_cls
-from ryu.ofproto import ofproto_v1_0
-from ryu.lib.mac import haddr_to_bin
+from ryu.ofproto import ofproto_v1_3
 from ryu.lib.packet import packet
 from ryu.lib.packet import ethernet
-from ryu.lib.packet import ether_types
 from ryu.topology import event, switches
 from ryu.topology.api import get_switch, get_link
+import copy
 
 
-class SimpleSwitch(app_manager.RyuApp):
-    OFP_VERSIONS = [ofproto_v1_0.OFP_VERSION]
+class ExampleSwitch13(app_manager.RyuApp):\
+    OFP_VERSIONS = [ofproto_v1_3.OFP_VERSION]
 
     def __init__(self, *args, **kwargs):
-        super(SimpleSwitch, self).__init__(*args, **kwargs)
+        super(ExampleSwitch13, self).__init__(*args, **kwargs)
+        # initialize mac address table.
         self.mac_to_port = {}
+        self.topo_switches = []
+        self.topo_links = []
 
-    def add_flow(self, datapath, in_port, dst, src, actions):
+    @set_ev_cls(ofp_event.EventOFPSwitchFeatures, CONFIG_DISPATCHER)
+    def switch_features_handler(self, ev):
+        datapath = ev.msg.datapath
         ofproto = datapath.ofproto
+        parser = datapath.ofproto_parser
 
-        match = datapath.ofproto_parser.OFPMatch(
-            in_port=in_port,
-            dl_dst=haddr_to_bin(dst), dl_src=haddr_to_bin(src))
+        # install the table-miss flow entry.
+        match = parser.OFPMatch()
+        actions = [parser.OFPActionOutput(ofproto.OFPP_CONTROLLER,
+                                          ofproto.OFPCML_NO_BUFFER)]
+        self.add_flow(datapath, 0, match, actions)
 
-        mod = datapath.ofproto_parser.OFPFlowMod(
-            datapath=datapath, match=match, cookie=0,
-            command=ofproto.OFPFC_ADD, idle_timeout=0, hard_timeout=0,
-            priority=ofproto.OFP_DEFAULT_PRIORITY,
-            flags=ofproto.OFPFF_SEND_FLOW_REM, actions=actions)
+    def add_flow(self, datapath, priority, match, actions):
+        ofproto = datapath.ofproto
+        parser = datapath.ofproto_parser
+
+        # construct flow_mod message and send it.
+        inst = [parser.OFPInstructionActions(ofproto.OFPIT_APPLY_ACTIONS,
+                                             actions)]
+        mod = parser.OFPFlowMod(datapath=datapath, priority=priority,
+                                match=match, instructions=inst)
         datapath.send_msg(mod)
 
     @set_ev_cls(ofp_event.EventOFPPacketIn, MAIN_DISPATCHER)
@@ -57,65 +63,60 @@ class SimpleSwitch(app_manager.RyuApp):
         msg = ev.msg
         datapath = msg.datapath
         ofproto = datapath.ofproto
+        parser = datapath.ofproto_parser
 
-        pkt = packet.Packet(msg.data)
-        eth = pkt.get_protocol(ethernet.ethernet)
-
-        if eth.ethertype == ether_types.ETH_TYPE_LLDP:
-            # ignore lldp packet
-            return
-        dst = eth.dst
-        src = eth.src
-
+        # get Datapath ID to identify OpenFlow switches.
         dpid = datapath.id
+        ip_src = mas.match['src_ip']
         self.mac_to_port.setdefault(dpid, {})
+        self.arp_table.setdefault(ip_src, {})
 
-        self.logger.info("packet in %s %s %s %s", dpid, src, dst, msg.in_port)
+        # analyse the received packets using the packet library.
+        pkt = packet.Packet(msg.data)
+        eth_pkt = pkt.get_protocol(ethernet.ethernet)
+        dst = eth_pkt.dst
+        src = eth_pkt.src
+
+        # get the received port number from packet_in message.
+        in_port = msg.match['in_port']
+
+        self.logger.info("packet in %s %s %s %s", dpid, src, dst, in_port)
 
         # learn a mac address to avoid FLOOD next time.
-        self.mac_to_port[dpid][src] = msg.in_port
+        self.mac_to_port[dpid][src] = in_port
 
+        # if the destination mac address is already learned,
+        # decide which port to output the packet, otherwise return.
         if dst in self.mac_to_port[dpid]:
             out_port = self.mac_to_port[dpid][dst]
         else:
-            out_port = ofproto.OFPP_FLOOD
+            return
 
-        actions = [datapath.ofproto_parser.OFPActionOutput(out_port)]
+        # construct action list.
+        actions = [parser.OFPActionOutput(out_port)]
 
-        # install a flow to avoid packet_in next time
+        # install a flow to avoid packet_in next time.
         if out_port != ofproto.OFPP_FLOOD:
-            self.add_flow(datapath, msg.in_port, dst, src, actions)
+            match = parser.OFPMatch(in_port=in_port, eth_dst=dst)
+            self.add_flow(datapath, 1, match, actions)
 
-        data = None
-        if msg.buffer_id == ofproto.OFP_NO_BUFFER:
-            data = msg.data
-
-        out = datapath.ofproto_parser.OFPPacketOut(
-            datapath=datapath, buffer_id=msg.buffer_id, in_port=msg.in_port,
-            actions=actions, data=data)
+        # construct packet_out message and send it.
+        out = parser.OFPPacketOut(datapath=datapath,
+                                  buffer_id=ofproto.OFP_NO_BUFFER,
+                                  in_port=in_port, actions=actions,
+                                  data=msg.data)
         datapath.send_msg(out)
 
-    @set_ev_cls(ofp_event.EventOFPPortStatus, MAIN_DISPATCHER)
-    def _port_status_handler(self, ev):
-        msg = ev.msg
-        reason = msg.reason
-        port_no = msg.desc.port_no
-
-        ofproto = msg.datapath.ofproto
-        if reason == ofproto.OFPPR_ADD:
-            self.logger.info("port added %s", port_no)
-        elif reason == ofproto.OFPPR_DELETE:
-            self.logger.info("port deleted %s", port_no)
-        elif reason == ofproto.OFPPR_MODIFY:
-            self.logger.info("port modified %s", port_no)
-        else:
-            self.logger.info("Illeagal port state %s %s", port_no, reason)
 
     @set_ev_cls(event.EventSwitchEnter)
-    def get_topology_data(self, ev):
-        switch_list = get_switch(self.topology_api_app, None)
-        switches=[switch.dp.id for switch in switch_list]
-        links_list = get_link(self.topology_api_app, None)
-        links=[(link.src.dpid,link.dst.dpid,{'port':link.src.port_no}) for link in links_list]
-        #print links
-        #print switches
+    def handler_switch_enter(self, ev):
+        self.topo_switches = copy.copy(get_switch(self, None))
+        self.topo_links = copy.copy(get_link(self, None))
+
+        print(" \t" + "Current Links:")
+        for l in self.topo_links:
+            print (" \t\t" + str(l))
+
+        print(" \t" + "Current Switches:")
+        for s in self.topo_switches:
+            print (" \t\t" + str(s))
