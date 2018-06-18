@@ -35,13 +35,13 @@ class SimpleSwitch13(app_manager.RyuApp):
 
     def __init__(self, *args, **kwargs):
         super(SimpleSwitch13, self).__init__(*args, **kwargs)
-        self.mac_to_port = {}
-        self.arp_table = {}
+        self.mac_to_port = dict()
+        self.arp_table = dict()
         self.net=nx.DiGraph()
-        self.nodes = {}
-        self.links = {}
+        self.nodes = dict()
+        self.links = dict()
         self.topology_api_app = self
-
+    
     @set_ev_cls(ofp_event.EventOFPSwitchFeatures, CONFIG_DISPATCHER)
     def switch_features_handler(self, ev):
         datapath = ev.msg.datapath
@@ -59,6 +59,8 @@ class SimpleSwitch13(app_manager.RyuApp):
         actions = [parser.OFPActionOutput(ofproto.OFPP_CONTROLLER,
                                           ofproto.OFPCML_NO_BUFFER)]
         self.add_flow(datapath, 0, match, actions)
+
+    
 
     def add_flow(self, datapath, priority, match, actions, buffer_id=None):
         ofproto = datapath.ofproto
@@ -95,32 +97,14 @@ class SimpleSwitch13(app_manager.RyuApp):
         ip_pkt = pkt.get_protocol(ipv4.ipv4)
         ip_pkt_6 = pkt.get_protocol(ipv6.ipv6)
 
-        if isinstance(arp_pkt, arp.arp):
-            self.logger.debug("ARP processing")
-            self.arp_table.setdefault(arp_pkt.src_ip, {})
-            if not eth.src in self.arp_table[arp_pkt.src_ip]:
-                self.arp_table[arp_pkt.src_ip] = eth.src
-                print("IP: "+arp_pkt.src_ip+" Eth: "+self.arp_table[arp_pkt.src_ip]+" aggiunto")
-                return
-            else:
-                #print(self.switches)
-                #print(self.get_link)
-                return
-
-
-        #ip_src = pkt.src_ip
-        #print("ip_src: %s", ip_src)
-        #ip_dst = pkt.dst_ip
-        #print("ip_dst: %s", ip_dst)
-
         if eth.ethertype == ether_types.ETH_TYPE_LLDP:
             # ignore lldp packet
             return
 
         dst = eth.dst
-        print("dst: %s", dst)
+        print("dst: ", dst)
         src = eth.src
-        print("src: %s", src)
+        print("src: ", src)
         in_port = msg.match['in_port']
 
         dpid = datapath.id
@@ -133,13 +117,56 @@ class SimpleSwitch13(app_manager.RyuApp):
 
         if src not in self.net:
             self.net.add_node(src)
+            self.net.add_edges_from([(dpid,src,{'port':msg.match['in_port']})]) 
             self.net.add_edge(src,dpid)
-        if dst in self.net:
-            path=nx.shortest_path(self.net,src,dst)   
-            next=path[path.index(dpid)+1]
-            out_port=self.net[dpid][next]['port']
-        else:
-            return
+
+        if isinstance(arp_pkt, arp.arp):
+            self.logger.info("ARP processing")
+            self.arp_table.setdefault(arp_pkt.src_ip, {})
+            if not eth.src in self.arp_table[arp_pkt.src_ip]:
+                self.logger.info("ip src not in arp table")
+                self.arp_table[arp_pkt.src_ip] = eth.src
+                print("IP: "+arp_pkt.src_ip+" Eth: "+self.arp_table[arp_pkt.src_ip]+" aggiunto")
+            if not arp_pkt.dst_ip in self.arp_table:
+                self.logger.info("ip dst not in arp table")                
+                return
+            else:
+                dst = self.arp_table[arp_pkt.dst_ip]
+                print("dst: ", dst)
+
+                if dst in self.net:
+                    print("dst in net")
+                    path=nx.shortest_path(self.net, source=src, target=dst)
+                    print "path"
+                    print path
+                    next=path[path.index(dpid)+1]
+                    out_port=self.net[dpid][next]['port']
+                else:
+                    print("exit")
+                    return
+
+        if isinstance(ip_pkt, ipv4.ipv4):
+            self.logger.info("IPV4 processing")
+            out_port = None
+            if eth.dst in self.mac_to_port[dpid]:
+                self.arp_table.setdefault(ip_pkt.src_ip, {})
+                if not eth.src in self.arp_table[ip_pkt.src_ip]:
+                    self.arp_table[ip_pkt.src_ip] = eth.src
+                    print("IP: "+ip_pkt.src_ip+" Eth: "+self.arp_table[ip_pkt.src_ip]+" aggiunto")
+                    return
+                else:
+                    dst = self.arp_table[ip_pkt.dst_ip]
+                    print("dst: ", dst)
+                    if dst in self.net:
+                        print("dst in net")
+                        path=nx.shortest_path(self.net, source=src, target=dst)
+                        next=path[path.index(dpid)+1]
+                        out_port=self.net[dpid][next]['port']
+                    else:
+                        print("exit")
+                        return
+            else:
+                return
 
         actions = [parser.OFPActionOutput(out_port)]
 
@@ -161,12 +188,15 @@ class SimpleSwitch13(app_manager.RyuApp):
                                   in_port=in_port, actions=actions, data=data)
         datapath.send_msg(out)
 
-                    
     @set_ev_cls(event.EventSwitchEnter)
     def get_topology_data(self, ev):
         switch_list = get_switch(self.topology_api_app, None)   
         switches=[switch.dp.id for switch in switch_list]
         self.net.add_nodes_from(switches)
+        #print "list of switches"
+        #print switches
+        #print "list of nodes"
+        #print self.net.nodes
         links_list = get_link(self.topology_api_app, None)
         #print links_list
         links=[(link.src.dpid,link.dst.dpid,{'port':link.src.port_no}) for link in links_list]
@@ -175,5 +205,6 @@ class SimpleSwitch13(app_manager.RyuApp):
         links=[(link.dst.dpid,link.src.dpid,{'port':link.dst.port_no}) for link in links_list]
         #print links
         self.net.add_edges_from(links)
-        print "**********List of links"
-        print self.net.edges()
+        #print "**********List of links"
+        #print self.net.edges()
+                    
