@@ -44,7 +44,9 @@ class SimpleSwitch13(app_manager.RyuApp):
         self.group_ids = []
         self.multipath_group_ids = {}
         self.hosts = []
-    
+        self.adjacency = defaultdict(dict)
+
+            
     @set_ev_cls(ofp_event.EventOFPSwitchFeatures, CONFIG_DISPATCHER)
     def switch_features_handler(self, ev):
         datapath = ev.msg.datapath
@@ -287,4 +289,28 @@ class SimpleSwitch13(app_manager.RyuApp):
         if switch.id not in self.switches
         self.switches.append(switch.id)
         self.datapath_list[switch.id] = switch
+
+
+    @set_ev_cls(event.EventSwitchLeave, MAIN_DISPATCHER)
+    def switch_leave_handler(self, event):
+        print event
+        switch = event.switch.dp.id
+        if switch in self.switches:
+            del self.switches[switch]
+            del self.datapath_list[switch]
+            del self.adjacency[switch]
+
+    @set_ev_cls(event.EventLinkAdd, MAIN_DISPATCHER)
+    def link_add_handler(self, event):
+        s1 = event.link.src
+        s2 = event.link.dst
+        self.adjacency[s1.dpid][s2.dpid] = s1.port_no
+        self.adjacency[s2.dpid][s1.dpid] = s2.port_no
+
+    @set_ev_cls(event.EventLinkDelete, MAIN_DISPATCHER)
+    def link_delete_handler(self, event):
+        s1 = event.link.src
+        s2 = event.link.dst
+        del self.adjacency[s1.dpid][s2.dpid]
+        del self.adjacency[s2.dpid][s1.dpid]
                     
