@@ -102,17 +102,17 @@ class SimpleSwitch13(app_manager.RyuApp):
             return
 
         dst = eth.dst
-        print("dst: ", dst)
+        print "\033[92m"+"dst: "+"\033[0m"+dst
         src = eth.src
-        print("src: ", src)
+        print "\033[92m"+"src: "+"\033[0m"+ src
+
         in_port = msg.match['in_port']
 
         dpid = datapath.id
         self.mac_to_port.setdefault(dpid, {})
 
-        self.logger.info("packet in %s %s %s %s", dpid, src, dst, in_port)
+        self.logger.debug("packet in %s %s %s %s", dpid, src, dst, in_port)
 
-        # learn a mac address to avoid FLOOD next time.
         self.mac_to_port[dpid][src] = in_port
 
         if src not in self.net:
@@ -121,65 +121,61 @@ class SimpleSwitch13(app_manager.RyuApp):
             self.net.add_edge(src,dpid)
 
         if isinstance(arp_pkt, arp.arp):
-            self.logger.info("ARP processing")
+            self.logger.debug("ARP processing")
             self.arp_table.setdefault(arp_pkt.src_ip, {})
             if not eth.src in self.arp_table[arp_pkt.src_ip]:
-                self.logger.info("ip src not in arp table")
+                print "\033[93m"+"ip src not in arp table"+"\033[0m"
                 self.arp_table[arp_pkt.src_ip] = eth.src
-                print("IP: "+arp_pkt.src_ip+" Eth: "+self.arp_table[arp_pkt.src_ip]+" aggiunto")
+                print "\033[92m"+"IP: "+"\033[0m"+arp_pkt.src_ip+"\033[92m"+" Eth: "+"\033[0m"+self.arp_table[arp_pkt.src_ip]+"\033[92m"+" added"+"\033[0m"
             if not arp_pkt.dst_ip in self.arp_table:
-                self.logger.info("ip dst not in arp table")                
+                print "\033[93m"+"ip dst not in arp table"+"\033[0m"             
                 return
             else:
                 dst = self.arp_table[arp_pkt.dst_ip]
-                print("dst: ", dst)
-
                 if dst in self.net:
-                    print("dst in net")
+                    print "\033[94m"+"Eth dst in net"+"\033[0m"
                     path=nx.shortest_path(self.net, source=src, target=dst)
-                    print "path"
+                    print "\033[95m"+"Path"+"\033[0m"
                     print path
                     next=path[path.index(dpid)+1]
                     out_port=self.net[dpid][next]['port']
                 else:
-                    print("exit")
+                    print "\033[91m"+"exit"+"\033[0m"
                     return
 
         if isinstance(ip_pkt, ipv4.ipv4):
-            self.logger.info("IPV4 processing")
+            self.logger.debug("IPV4 processing")
             out_port = None
             if eth.dst in self.mac_to_port[dpid]:
                 self.arp_table.setdefault(ip_pkt.src_ip, {})
                 if not eth.src in self.arp_table[ip_pkt.src_ip]:
                     self.arp_table[ip_pkt.src_ip] = eth.src
-                    print("IP: "+ip_pkt.src_ip+" Eth: "+self.arp_table[ip_pkt.src_ip]+" aggiunto")
+                    print "\033[92m"+"IP: "+"\033[0m"+ip_pkt.src_ip+"\033[92m"+" Eth: "+"\033[0m"+self.arp_table[ip_pkt.src_ip]+"\033[92m"+" added"+"\033[0m"
                     return
                 else:
                     dst = self.arp_table[ip_pkt.dst_ip]
-                    print("dst: ", dst)
                     if dst in self.net:
-                        print("dst in net")
+                        print "\033[94m"+"IP dst in net"+"\033[0m"
                         path=nx.shortest_path(self.net, source=src, target=dst)
                         next=path[path.index(dpid)+1]
                         out_port=self.net[dpid][next]['port']
                     else:
-                        print("exit")
+                        print "\033[91m"+"exit"+"\033[0m"
                         return
             else:
                 return
 
         actions = [parser.OFPActionOutput(out_port)]
 
-        # install a flow to avoid packet_in next time
-        if out_port != ofproto.OFPP_FLOOD:
-            match = parser.OFPMatch(in_port=in_port, eth_dst=dst, eth_src=src)
-            # verify if we have a valid buffer_id, if yes avoid to send both
-            # flow_mod & packet_out
-            if msg.buffer_id != ofproto.OFP_NO_BUFFER:
-                self.add_flow(datapath, 1, match, actions, msg.buffer_id)
-                return
-            else:
-                self.add_flow(datapath, 1, match, actions)
+
+        match = parser.OFPMatch(in_port=in_port, eth_dst=dst, eth_src=src)
+        # verify if we have a valid buffer_id, if yes avoid to send both
+        # flow_mod & packet_out
+        if msg.buffer_id != ofproto.OFP_NO_BUFFER:
+            self.add_flow(datapath, 1, match, actions, msg.buffer_id)
+            return
+        else:
+            self.add_flow(datapath, 1, match, actions)
         data = None
         if msg.buffer_id == ofproto.OFP_NO_BUFFER:
             data = msg.data
@@ -193,18 +189,9 @@ class SimpleSwitch13(app_manager.RyuApp):
         switch_list = get_switch(self.topology_api_app, None)   
         switches=[switch.dp.id for switch in switch_list]
         self.net.add_nodes_from(switches)
-        #print "list of switches"
-        #print switches
-        #print "list of nodes"
-        #print self.net.nodes
         links_list = get_link(self.topology_api_app, None)
-        #print links_list
         links=[(link.src.dpid,link.dst.dpid,{'port':link.src.port_no}) for link in links_list]
-        #print links
         self.net.add_edges_from(links)
         links=[(link.dst.dpid,link.src.dpid,{'port':link.dst.port_no}) for link in links_list]
-        #print links
         self.net.add_edges_from(links)
-        #print "**********List of links"
-        #print self.net.edges()
                     
