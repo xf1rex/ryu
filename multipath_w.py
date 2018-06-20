@@ -38,20 +38,15 @@ class SimpleSwitch13(app_manager.RyuApp):
         self.mac_to_port = dict()
         self.arp_table = dict()
         self.net=nx.DiGraph()
-        self.datapath_list = {}
-        self.switches = []
         self.topology_api_app = self
         self.group_ids = []
-        self.multipath_group_ids = {}
-        self.hosts = []
-        self.adjacency = defaultdict(dict)
-
-            
+    
     @set_ev_cls(ofp_event.EventOFPSwitchFeatures, CONFIG_DISPATCHER)
     def switch_features_handler(self, ev):
         datapath = ev.msg.datapath
         ofproto = datapath.ofproto
         parser = datapath.ofproto_parser
+
         # install table-miss flow entry
         #
         # We specify NO BUFFER to max_len of the output action due to
@@ -82,116 +77,12 @@ class SimpleSwitch13(app_manager.RyuApp):
         datapath.send_msg(mod)
 
     def generate_openflow_gid(self):
-        '''
-        Returns a random OpenFlow group id
-        '''
         n = random.randint(0, 2**32)
         while n in self.group_ids:
             n = random.randint(0, 2**32)
+        self.group_ids.append(n)
         return n
 
-    def add_ports_to_paths(self, paths, first_port, last_port):
-        '''
-        Add the ports that connects the switches for all paths
-        '''
-        paths_p = []
-        for path in paths:
-            p = {}
-            in_port = first_port
-            for s1, s2 in zip(path[:-1], path[1:]):
-                out_port = self.adjacency[s1][s2]
-                p[s1] = (in_port, out_port)
-                in_port = self.adjacency[s2][s1]
-            p[path[-1]] = (in_port, last_port)
-            paths_p.append(p)
-        return paths_p
-
-    def set_paths(self, src, first_port, dst, last_port, ip_src, ip_dst):
-        paths=nx.all_shortest_paths(self.net, source=src, target=dst)
-        paths_with_ports = self.add_ports_to_paths(paths, first_port, last_port)
-        switches_in_paths = set().union(*paths)
-
-        for node in switches_in_paths:
-
-            dp = self.datapath_list[node]
-            ofp = dp.ofproto
-            ofp_parser = dp.ofproto_parser
-
-            ports = defaultdict(list)
-            actions = []
-            i = 0
-
-            for path in paths_with_ports:
-                if node in path:
-                    in_port = path[node][0]
-                    out_port = path[node][1]
-                    if (out_port, pw[i]) not in ports[in_port]:
-                        ports[in_port].append((out_port, pw[i]))
-                i += 1
-
-            for in_port in ports:
-
-                match_ip = ofp_parser.OFPMatch(
-                    eth_type=0x0800, 
-                    ipv4_src=ip_src, 
-                    ipv4_dst=ip_dst
-                )
-                match_arp = ofp_parser.OFPMatch(
-                    eth_type=0x0806, 
-                    arp_spa=ip_src, 
-                    arp_tpa=ip_dst
-                )
-
-                out_ports = ports[in_port]
-                print out_ports 
-
-                if len(out_ports) > 1:
-                    group_id = None
-                    group_new = False
-
-                    if (node, src, dst) not in self.multipath_group_ids:
-                        group_new = True
-                        self.multipath_group_ids[
-                            node, src, dst] = self.generate_openflow_gid()
-                    group_id = self.multipath_group_ids[node, src, dst]
-
-                    buckets = []
-                    # print "node at ",node," out ports : ",out_ports
-                    for port, weight in out_ports:
-                        bucket_weight = int(round((1 - weight/sum_of_pw) * 10))
-                        bucket_action = [ofp_parser.OFPActionOutput(port)]
-                        buckets.append(
-                            ofp_parser.OFPBucket(
-                                weight=bucket_weight,
-                                watch_port=port,
-                                watch_group=ofp.OFPG_ANY,
-                                actions=bucket_action
-                            )
-                        )
-
-                    if group_new:
-                        req = ofp_parser.OFPGroupMod(
-                            dp, ofp.OFPGC_ADD, ofp.OFPGT_SELECT, group_id,
-                            buckets
-                        )
-                        dp.send_msg(req)
-                    else:
-                        req = ofp_parser.OFPGroupMod(
-                            dp, ofp.OFPGC_MODIFY, ofp.OFPGT_SELECT,
-                            group_id, buckets)
-                        dp.send_msg(req)
-
-                    actions = [ofp_parser.OFPActionGroup(group_id)]
-
-                    self.add_flow(dp, 32768, match_ip, actions)
-                    self.add_flow(dp, 1, match_arp, actions)
-
-                elif len(out_ports) == 1:
-                    actions = [ofp_parser.OFPActionOutput(out_ports[0][0])]
-
-                    self.add_flow(dp, 32768, match_ip, actions)
-                    self.add_flow(dp, 1, match_arp, actions)
-        return paths_with_ports[0][src][1]
 
     @set_ev_cls(ofp_event.EventOFPPacketIn, MAIN_DISPATCHER)
     def _packet_in_handler(self, ev):
@@ -212,7 +103,7 @@ class SimpleSwitch13(app_manager.RyuApp):
         arp_pkt = pkt.get_protocol(arp.arp)
         ip_pkt = pkt.get_protocol(ipv4.ipv4)
         ip_pkt_6 = pkt.get_protocol(ipv6.ipv6)
-
+        buckets = []
         if eth.ethertype == ether_types.ETH_TYPE_LLDP:
             # ignore lldp packet
             return
@@ -236,9 +127,6 @@ class SimpleSwitch13(app_manager.RyuApp):
             self.net.add_edges_from([(dpid,src,{'port':msg.match['in_port']})]) 
             self.net.add_edge(src,dpid)
 
-        if src not in self.hosts:
-            self.hosts[src] = (dpid, in_ports)
-
         if isinstance(arp_pkt, arp.arp):
             self.logger.debug("ARP processing")
             self.arp_table.setdefault(arp_pkt.src_ip, {})
@@ -253,20 +141,56 @@ class SimpleSwitch13(app_manager.RyuApp):
                 dst = self.arp_table[arp_pkt.dst_ip]
                 if dst in self.net:
                     print "\033[94m"+"Eth dst in net"+"\033[0m"
-
-                    h1 = self.hosts[src]
-                    h2 = self.hosts[dst]
-
-                    out_port = self.set_paths(h1[0], h1[1], h2[0], h2[1], arp_pkt.src_ip, arp_pkt.dst_ip)
-                    self.set_paths(h2[0], h2[1], h1[0], h2[0], arp_pkt.dst_ip, arp_pkt.src_ip)
-
+                    paths=nx.all_shortest_paths(self.net, source=src, target=dst)
+                    for path in paths:
+                        print "\033[95m"+"Path"+"\033[0m"
+                        print path
+                        next=path[path.index(dpid)+1]
+                        out_port=self.net[dpid][next]['port']
+                        actions = [parser.OFPActionOutput(out_port)]
+                        buckets.append(ofparser.OFPBucket(actions=actions))
+                    req = ofparser.OFPGroupMod(datapath=datapath, 
+                         type_=ofproto.OFPGT_SELECT, 
+                         group_id=generate_openflow_gid(), 
+                         buckets=buckets)
+                    datapath.send_msg(req)
                 else:
                     print "\033[91m"+"exit"+"\033[0m"
                     return
 
+        if isinstance(ip_pkt, ipv4.ipv4):
+            self.logger.debug("IPV4 processing")
+            out_port = None
+            if eth.dst in self.mac_to_port[dpid]:
+                self.arp_table.setdefault(ip_pkt.src, {})
+                if not eth.src in self.arp_table[ip_pkt.src]:
+                    self.arp_table[ip_pkt.src] = eth.src
+                    print "\033[92m"+"IP: "+"\033[0m"+ip_pkt.src+"\033[92m"+" Eth: "+"\033[0m"+self.arp_table[ip_pkt.src]+"\033[92m"+" added"+"\033[0m"
+                    return
+                else:
+                    dst = self.arp_table[ip_pkt.dst]
+                    if dst in self.net:
+                        print "\033[94m"+"IP dst in net"+"\033[0m"
+                        path=nx.all_shortest_paths(self.net, source=src, target=dst)
+                        next=path[path.index(dpid)+1]
+                        out_port=self.net[dpid][next]['port']
+                    else:
+                        print "\033[91m"+"exit"+"\033[0m"
+                        return
+            else:
+                return
 
         actions = [parser.OFPActionOutput(out_port)]
 
+
+        match = parser.OFPMatch(in_port=in_port, eth_dst=dst, eth_src=src)
+        # verify if we have a valid buffer_id, if yes avoid to send both
+        # flow_mod & packet_out
+        if msg.buffer_id != ofproto.OFP_NO_BUFFER:
+            self.add_flow(datapath, 1, match, actions, msg.buffer_id)
+            return
+        else:
+            self.add_flow(datapath, 1, match, actions)
         data = None
         if msg.buffer_id == ofproto.OFP_NO_BUFFER:
             data = msg.data
@@ -285,32 +209,4 @@ class SimpleSwitch13(app_manager.RyuApp):
         self.net.add_edges_from(links)
         links=[(link.dst.dpid,link.src.dpid,{'port':link.dst.port_no}) for link in links_list]
         self.net.add_edges_from(links)
-        switch = event.switch.dp
-        if switch.id not in self.switches
-        self.switches.append(switch.id)
-        self.datapath_list[switch.id] = switch
-
-
-    @set_ev_cls(event.EventSwitchLeave, MAIN_DISPATCHER)
-    def switch_leave_handler(self, event):
-        print event
-        switch = event.switch.dp.id
-        if switch in self.switches:
-            del self.switches[switch]
-            del self.datapath_list[switch]
-            del self.adjacency[switch]
-
-    @set_ev_cls(event.EventLinkAdd, MAIN_DISPATCHER)
-    def link_add_handler(self, event):
-        s1 = event.link.src
-        s2 = event.link.dst
-        self.adjacency[s1.dpid][s2.dpid] = s1.port_no
-        self.adjacency[s2.dpid][s1.dpid] = s2.port_no
-
-    @set_ev_cls(event.EventLinkDelete, MAIN_DISPATCHER)
-    def link_delete_handler(self, event):
-        s1 = event.link.src
-        s2 = event.link.dst
-        del self.adjacency[s1.dpid][s2.dpid]
-        del self.adjacency[s2.dpid][s1.dpid]
                     
