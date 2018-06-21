@@ -38,8 +38,6 @@ class SimpleSwitch13(app_manager.RyuApp):
         self.mac_to_port = dict()
         self.arp_table = dict()
         self.net=nx.DiGraph()
-        self.nodes = dict()
-        self.links = dict()
         self.topology_api_app = self
     
     @set_ev_cls(ofp_event.EventOFPSwitchFeatures, CONFIG_DISPATCHER)
@@ -77,6 +75,8 @@ class SimpleSwitch13(app_manager.RyuApp):
                                     match=match, instructions=inst)
         datapath.send_msg(mod)
 
+        
+
     @set_ev_cls(ofp_event.EventOFPPacketIn, MAIN_DISPATCHER)
     def _packet_in_handler(self, ev):
         # If you hit this you might want to increase
@@ -95,18 +95,16 @@ class SimpleSwitch13(app_manager.RyuApp):
 
         arp_pkt = pkt.get_protocol(arp.arp)
         ip_pkt = pkt.get_protocol(ipv4.ipv4)
-        ip_pkt_6 = pkt.get_protocol(ipv6.ipv6)
 
         if eth.ethertype == ether_types.ETH_TYPE_LLDP:
             # ignore lldp packet
             return
 
         dst = eth.dst
-        print "\033[92m"+"dst: "+"\033[0m"+dst
         src = eth.src
-        print "\033[92m"+"src: "+"\033[0m"+ src
+        print "Packet from " + "\033[92m" + "Eth src: " + "\033[0m" + src + " to " + "\033[92m" + "Eth dst: " + "\033[0m" + dst
+        print "Packet from " + "\033[92m" + "IP src: " + "\033[0m" + arp_pkt.src_ip + " to " + "\033[92m" + "IP dst: " + "\033[0m" + arp_pkt.dst_ip
 
-        in_port = msg.match['in_port']
 
         dpid = datapath.id
         self.mac_to_port.setdefault(dpid, {})
@@ -114,6 +112,13 @@ class SimpleSwitch13(app_manager.RyuApp):
         self.logger.debug("packet in %s %s %s %s", dpid, src, dst, in_port)
 
         self.mac_to_port[dpid][src] = in_port
+        
+        if pkt.get_protocol(ipv6.ipv6):  # Drop the IPV6 Packets.
+            match = parser.OFPMatch(eth_type=eth.ethertype)
+            actions = []
+            self.add_flow(datapath, 1, match, actions)
+            print "\033[91m"+"IPv6"+"\033[0m"
+            return None
 
         if src not in self.net:
             self.net.add_node(src)
@@ -147,13 +152,13 @@ class SimpleSwitch13(app_manager.RyuApp):
             self.logger.debug("IPV4 processing")
             out_port = None
             if eth.dst in self.mac_to_port[dpid]:
-                self.arp_table.setdefault(ip_pkt.src_ip, {})
-                if not eth.src in self.arp_table[ip_pkt.src_ip]:
-                    self.arp_table[ip_pkt.src_ip] = eth.src
-                    print "\033[92m"+"IP: "+"\033[0m"+ip_pkt.src_ip+"\033[92m"+" Eth: "+"\033[0m"+self.arp_table[ip_pkt.src_ip]+"\033[92m"+" added"+"\033[0m"
+                self.arp_table.setdefault(ip_pkt.src, {})
+                if not eth.src in self.arp_table[ip_pkt.src]:
+                    self.arp_table[ip_pkt.src] = eth.src
+                    print "\033[92m"+"IP: "+"\033[0m"+ip_pkt.src+"\033[92m"+" Eth: "+"\033[0m"+self.arp_table[ip_pkt.src]+"\033[92m"+" added"+"\033[0m"
                     return
                 else:
-                    dst = self.arp_table[ip_pkt.dst_ip]
+                    dst = self.arp_table[ip_pkt.dst]
                     if dst in self.net:
                         print "\033[94m"+"IP dst in net"+"\033[0m"
                         path=nx.shortest_path(self.net, source=src, target=dst)
@@ -189,9 +194,18 @@ class SimpleSwitch13(app_manager.RyuApp):
         switch_list = get_switch(self.topology_api_app, None)   
         switches=[switch.dp.id for switch in switch_list]
         self.net.add_nodes_from(switches)
+        #print "list of switches"
+        #print switches
+        #print "list of nodes"
+        #print self.net.nodes
         links_list = get_link(self.topology_api_app, None)
+        #print links_list
         links=[(link.src.dpid,link.dst.dpid,{'port':link.src.port_no}) for link in links_list]
+        #print links
         self.net.add_edges_from(links)
         links=[(link.dst.dpid,link.src.dpid,{'port':link.dst.port_no}) for link in links_list]
+        #print links
         self.net.add_edges_from(links)
+        #print "List of links"
+        #print self.net.edges()
                     
