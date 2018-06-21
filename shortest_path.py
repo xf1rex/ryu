@@ -95,6 +95,7 @@ class SimpleSwitch13(app_manager.RyuApp):
 
         arp_pkt = pkt.get_protocol(arp.arp)
         ip_pkt = pkt.get_protocol(ipv4.ipv4)
+        ip_pkt_6 = pkt.get_protocol(ipv6.ipv6)
 
         if eth.ethertype == ether_types.ETH_TYPE_LLDP:
             # ignore lldp packet
@@ -112,6 +113,11 @@ class SimpleSwitch13(app_manager.RyuApp):
         self.logger.debug("packet in %s %s %s %s", dpid, src, dst, in_port)
 
         self.mac_to_port[dpid][src] = in_port
+
+        if src not in self.net:
+            self.net.add_node(src)
+            self.net.add_edges_from([(dpid,src,{'port':msg.match['in_port']})]) 
+            self.net.add_edge(src,dpid)
         
         if pkt.get_protocol(ipv6.ipv6):  # Drop the IPV6 Packets.
             match = parser.OFPMatch(eth_type=eth.ethertype)
@@ -119,13 +125,8 @@ class SimpleSwitch13(app_manager.RyuApp):
             self.add_flow(datapath, 1, match, actions)
             print "\033[91m"+"IPv6"+"\033[0m"
             return None
-
-        if src not in self.net:
-            self.net.add_node(src)
-            self.net.add_edges_from([(dpid,src,{'port':msg.match['in_port']})]) 
-            self.net.add_edge(src,dpid)
-
-        if isinstance(arp_pkt, arp.arp):
+        
+        elif isinstance(arp_pkt, arp.arp):
             self.logger.debug("ARP processing")
             self.arp_table.setdefault(arp_pkt.src_ip, {})
             if not eth.src in self.arp_table[arp_pkt.src_ip]:
@@ -148,27 +149,26 @@ class SimpleSwitch13(app_manager.RyuApp):
                     print "\033[91m"+"exit"+"\033[0m"
                     return
 
-        if isinstance(ip_pkt, ipv4.ipv4):
+        elif isinstance(ip_pkt, ipv4.ipv4):
             self.logger.debug("IPV4 processing")
             out_port = None
-            if eth.dst in self.mac_to_port[dpid]:
-                self.arp_table.setdefault(ip_pkt.src, {})
-                if not eth.src in self.arp_table[ip_pkt.src]:
-                    self.arp_table[ip_pkt.src] = eth.src
-                    print "\033[92m"+"IP: "+"\033[0m"+ip_pkt.src+"\033[92m"+" Eth: "+"\033[0m"+self.arp_table[ip_pkt.src]+"\033[92m"+" added"+"\033[0m"
-                    return
-                else:
-                    dst = self.arp_table[ip_pkt.dst]
-                    if dst in self.net:
-                        print "\033[94m"+"IP dst in net"+"\033[0m"
-                        path=nx.shortest_path(self.net, source=src, target=dst)
-                        next=path[path.index(dpid)+1]
-                        out_port=self.net[dpid][next]['port']
-                    else:
-                        print "\033[91m"+"exit"+"\033[0m"
-                        return
-            else:
+            self.arp_table.setdefault(ip_pkt.src, {})
+            if not eth.src in self.arp_table[ip_pkt.src]:
+                self.arp_table[ip_pkt.src] = eth.src
+                print "\033[92m"+"IP: "+"\033[0m"+ip_pkt.src+"\033[92m"+" Eth: "+"\033[0m"+self.arp_table[ip_pkt.src]+"\033[92m"+" added"+"\033[0m"
                 return
+            else:
+                dst = self.arp_table[ip_pkt.dst]
+                if dst in self.net:
+                    print "\033[94m"+"IP dst in net"+"\033[0m"
+                    path=nx.shortest_path(self.net, source=src, target=dst)
+                    next=path[path.index(dpid)+1]
+                    out_port=self.net[dpid][next]['port']
+                else:
+                    print "\033[91m"+"exit"+"\033[0m"
+                    return
+        else:
+            return
 
         actions = [parser.OFPActionOutput(out_port)]
 
