@@ -28,18 +28,20 @@ from ryu.topology import event, switches
 from ryu.topology.api import get_switch, get_link
 import copy
 import networkx as nx
+import random
 
 
-class SimpleSwitch13(app_manager.RyuApp):
+class Ecmp13(app_manager.RyuApp):
     OFP_VERSIONS = [ofproto_v1_3.OFP_VERSION]
 
     def __init__(self, *args, **kwargs):
-        super(SimpleSwitch13, self).__init__(*args, **kwargs)
+        super(Ecmp13, self).__init__(*args, **kwargs)
         self.mac_to_port = dict()
         self.arp_table = dict()
         self.net=nx.DiGraph()
         self.topology_api_app = self
         self.group_ids = []
+        self.multipath_group_ids = {}
     
     @set_ev_cls(ofp_event.EventOFPSwitchFeatures, CONFIG_DISPATCHER)
     def switch_features_handler(self, ev):
@@ -96,38 +98,49 @@ class SimpleSwitch13(app_manager.RyuApp):
         ofproto = datapath.ofproto
         parser = datapath.ofproto_parser
         in_port = msg.match['in_port']
-
         pkt = packet.Packet(msg.data)
         eth = pkt.get_protocols(ethernet.ethernet)[0]
-
         arp_pkt = pkt.get_protocol(arp.arp)
         ip_pkt = pkt.get_protocol(ipv4.ipv4)
-        ip_pkt_6 = pkt.get_protocol(ipv6.ipv6)
+
+        in_port = msg.match['in_port']
+        dpid = datapath.id
+
         buckets = []
+
+
         if eth.ethertype == ether_types.ETH_TYPE_LLDP:
             # ignore lldp packet
             return
 
         dst = eth.dst
-        print "\033[92m"+"dst: "+"\033[0m"+dst
         src = eth.src
-        print "\033[92m"+"src: "+"\033[0m"+ src
+        print "Packet from " + "\033[92m" + "Eth src: " + "\033[0m" + src + " to " + "\033[92m" + "Eth dst: " + "\033[0m" + dst
+        #print "Packet from " + "\033[92m" + "IP src: " + "\033[0m" + arp_pkt.src_ip + " to " + "\033[92m" + "IP dst: " + "\033[0m" + arp_pkt.dst_ip
 
-        in_port = msg.match['in_port']
-
-        dpid = datapath.id
         self.mac_to_port.setdefault(dpid, {})
-
         self.logger.debug("packet in %s %s %s %s", dpid, src, dst, in_port)
-
         self.mac_to_port[dpid][src] = in_port
+
+
 
         if src not in self.net:
             self.net.add_node(src)
             self.net.add_edges_from([(dpid,src,{'port':msg.match['in_port']})]) 
             self.net.add_edge(src,dpid)
+        
+        if arp_pkt==None and ip_pkt==None:
+            print "\033[91m"+"exit Nonetype"+"\033[0m"
+            return
+        
+        elif pkt.get_protocol(ipv6.ipv6):  # Drop the IPV6 Packets.
+            match = parser.OFPMatch(eth_type=eth.ethertype)
+            actions = []
+            self.add_flow(datapath, 1, match, actions)
+            print "\033[91m"+"IPv6"+"\033[0m"
+            return None
 
-        if isinstance(arp_pkt, arp.arp):
+        elif isinstance(arp_pkt, arp.arp):
             self.logger.debug("ARP processing")
             self.arp_table.setdefault(arp_pkt.src_ip, {})
             if not eth.src in self.arp_table[arp_pkt.src_ip]:
@@ -138,66 +151,176 @@ class SimpleSwitch13(app_manager.RyuApp):
                 print "\033[93m"+"ip dst not in arp table"+"\033[0m"             
                 return
             else:
+                mod = False
+                self.arp_table.setdefault(arp_pkt.dst_ip, {})
                 dst = self.arp_table[arp_pkt.dst_ip]
+                if dst == None:
+                    return
                 if dst in self.net:
                     print "\033[94m"+"Eth dst in net"+"\033[0m"
                     paths=nx.all_shortest_paths(self.net, source=src, target=dst)
-                    for path in paths:
-                        print "\033[95m"+"Path"+"\033[0m"
-                        print path
-                        next=path[path.index(dpid)+1]
-                        out_port=self.net[dpid][next]['port']
-                        actions = [parser.OFPActionOutput(out_port)]
-                        buckets.append(ofparser.OFPBucket(actions=actions))
-                    req = ofparser.OFPGroupMod(datapath=datapath, 
-                         type_=ofproto.OFPGT_SELECT, 
-                         group_id=generate_openflow_gid(), 
-                         buckets=buckets)
-                    datapath.send_msg(req)
+                    bucket_weight = 25 #int((1.0/len(list(p)))*100)
+                    if (dpid, src, dst) not in self.multipath_group_ids:
+                        self.multipath_group_ids[dpid, src, dst] = self.generate_openflow_gid()
+                        group_id=self.multipath_group_ids[dpid, src, dst]
+                        for path in paths:
+                            print "\033[95m"+"Path"+"\033[0m"
+                            print path
+                            if dpid in path:
+                                mod = True
+                                next=path[path.index(dpid)+1]
+                                out_port=self.net[dpid][next]['port']
+                                actions = [parser.OFPActionOutput(out_port)]
+                                buckets.append(parser.OFPBucket(weight=bucket_weight, actions=actions))
+                        if mod:
+                            req = parser.OFPGroupMod(datapath=datapath,
+                                 command=ofproto.OFPGC_ADD, 
+                                 type_=ofproto.OFPGT_SELECT, 
+                                 group_id=group_id, 
+                                 buckets=buckets)
+                            datapath.send_msg(req)
+                            for buck in buckets:
+                                print "1 ", buck
+                    
+                    else:
+                        group_id=self.multipath_group_ids[dpid, src, dst]
+                        for path in paths:
+                            print "\033[95m"+"Path"+"\033[0m"
+                            print path
+                            if dpid in path:
+                                mod = True
+                                next=path[path.index(dpid)+1]
+                                out_port=self.net[dpid][next]['port']
+                                actions = [parser.OFPActionOutput(out_port)]
+                                buckets.append(parser.OFPBucket(weight=bucket_weight, actions=actions))
+                        
+                        if mod:
+                            req = parser.OFPGroupMod(datapath=datapath,
+                                command=ofproto.OFPGC_MODIFY, 
+                                type_=ofproto.OFPGT_SELECT, 
+                                group_id=group_id, 
+                                buckets=buckets)
+                            datapath.send_msg(req)
+                            for buck in buckets:
+                                print "2 ", buck
+                
+                    match_ip = parser.OFPMatch(
+                        eth_type=0x0800, 
+                        ipv4_src=arp_pkt.src_ip, 
+                        ipv4_dst=arp_pkt.dst_ip
+                    )
+                    match_arp = parser.OFPMatch(
+                        eth_type=0x0806, 
+                        arp_spa=arp_pkt.src_ip, 
+                        arp_tpa=arp_pkt.dst_ip
+                    )
+                    #print "group id: ", group_id
+                    actions = [parser.OFPActionGroup(group_id)]
+
+                    self.add_flow(datapath, 32768, match_ip, actions)
+                    self.add_flow(datapath, 1, match_arp, actions)    
                 else:
-                    print "\033[91m"+"exit"+"\033[0m"
+                    print "\033[91m"+"exit dst not in net"+"\033[0m"
                     return
 
-        if isinstance(ip_pkt, ipv4.ipv4):
+
+        
+
+        elif isinstance(ip_pkt, ipv4.ipv4):
             self.logger.debug("IPV4 processing")
             out_port = None
-            if eth.dst in self.mac_to_port[dpid]:
-                self.arp_table.setdefault(ip_pkt.src, {})
-                if not eth.src in self.arp_table[ip_pkt.src]:
-                    self.arp_table[ip_pkt.src] = eth.src
-                    print "\033[92m"+"IP: "+"\033[0m"+ip_pkt.src+"\033[92m"+" Eth: "+"\033[0m"+self.arp_table[ip_pkt.src]+"\033[92m"+" added"+"\033[0m"
-                    return
-                else:
-                    dst = self.arp_table[ip_pkt.dst]
-                    if dst in self.net:
-                        print "\033[94m"+"IP dst in net"+"\033[0m"
-                        path=nx.all_shortest_paths(self.net, source=src, target=dst)
-                        next=path[path.index(dpid)+1]
-                        out_port=self.net[dpid][next]['port']
-                    else:
-                        print "\033[91m"+"exit"+"\033[0m"
-                        return
-            else:
+            
+            self.arp_table.setdefault(ip_pkt.src, {})
+            if not eth.src in self.arp_table[ip_pkt.src]:
+                self.arp_table[ip_pkt.src] = eth.src
+                print "\033[92m"+"IP: "+"\033[0m"+ip_pkt.src+"\033[92m"+" Eth: "+"\033[0m"+self.arp_table[ip_pkt.src]+"\033[92m"+" added"+"\033[0m"
                 return
+            else:
+                mod = False
+                self.arp_table.setdefault(ip_pkt.dst, {})
+                dst = self.arp_table[ip_pkt.dst]
+                if dst == None:
+                    return
+                if dst in self.net:
+                    print "\033[94m"+"IP dst in net"+"\033[0m"
+                    paths=nx.all_shortest_paths(self.net, source=src, target=dst)
+                    bucket_weight = 25 #int((1.0/len(list(p)))*100)
+                    if (dpid, src, dst) not in self.multipath_group_ids:
+                        self.multipath_group_ids[dpid, src, dst] = self.generate_openflow_gid()
+                        group_id=self.multipath_group_ids[dpid, src, dst]
+                        for path in paths:
+                            print "\033[95m"+"Path"+"\033[0m"
+                            print path
+                            if dpid in path:
+                                mod = True
+                                next=path[path.index(dpid)+1]
+                                out_port=self.net[dpid][next]['port']
+                                actions = [parser.OFPActionOutput(out_port)]
+                                buckets.append(parser.OFPBucket(weight=bucket_weight, actions=actions))
+                        if mod:
+                            req = parser.OFPGroupMod(datapath=datapath,
+                                 command=ofproto.OFPGC_ADD, 
+                                 type_=ofproto.OFPGT_SELECT, 
+                                 group_id=group_id, 
+                                 buckets=buckets)
+                            datapath.send_msg(req)
+                            for buck in buckets:
+                                print "3 ", buck
+                    else:
+                        group_id=self.multipath_group_ids[dpid, src, dst]
+                        for path in paths:
+                            print "\033[95m"+"Path"+"\033[0m"
+                            print path
+                            if dpid in path:
+                                mod = True
+                                next=path[path.index(dpid)+1]
+                                out_port=self.net[dpid][next]['port']
+                                actions = [parser.OFPActionOutput(out_port)]
+                                buckets.append(parser.OFPBucket(weight=bucket_weight, actions=actions))
+                        
+                        if mod:
+                            req = parser.OFPGroupMod(datapath=datapath,
+                                command=ofproto.OFPGC_MODIFY, 
+                                type_=ofproto.OFPGT_SELECT, 
+                                group_id=group_id, 
+                                buckets=buckets)
+                            datapath.send_msg(req)
+                            for buck in buckets:
+                                print "4 ", buck
+                    match_ip = parser.OFPMatch(
+                        eth_type=0x0800, 
+                        ipv4_src=ip_pkt.src, 
+                        ipv4_dst=ip_pkt.dst
+                    )
+                    match_arp = parser.OFPMatch(
+                        eth_type=0x0806, 
+                        arp_spa=ip_pkt.src, 
+                        arp_tpa=ip_pkt.dst
+                    )
+                    #print "group id: ", group_id
+                    actions = [parser.OFPActionGroup(group_id)]
 
+                    self.add_flow(datapath, 32768, match_ip, actions)
+                    self.add_flow(datapath, 1, match_arp, actions)
+                else:
+                    print "\033[91m"+"exit dst not in net"+"\033[0m"
+                    return 
+        else:
+            print "\033[91m"+"exit not arp,ipv4,ipv6 or LLDP"+"\033[0m"
+            return
         actions = [parser.OFPActionOutput(out_port)]
 
+        
 
-        match = parser.OFPMatch(in_port=in_port, eth_dst=dst, eth_src=src)
-        # verify if we have a valid buffer_id, if yes avoid to send both
-        # flow_mod & packet_out
-        if msg.buffer_id != ofproto.OFP_NO_BUFFER:
-            self.add_flow(datapath, 1, match, actions, msg.buffer_id)
-            return
-        else:
-            self.add_flow(datapath, 1, match, actions)
         data = None
         if msg.buffer_id == ofproto.OFP_NO_BUFFER:
             data = msg.data
 
-        out = parser.OFPPacketOut(datapath=datapath, buffer_id=msg.buffer_id,
-                                  in_port=in_port, actions=actions, data=data)
+        out = parser.OFPPacketOut(
+            datapath=datapath, buffer_id=msg.buffer_id, in_port=in_port,
+            actions=actions, data=data)
         datapath.send_msg(out)
+
 
     @set_ev_cls(event.EventSwitchEnter)
     def get_topology_data(self, ev):
@@ -209,4 +332,4 @@ class SimpleSwitch13(app_manager.RyuApp):
         self.net.add_edges_from(links)
         links=[(link.dst.dpid,link.src.dpid,{'port':link.dst.port_no}) for link in links_list]
         self.net.add_edges_from(links)
-                    
+ 
