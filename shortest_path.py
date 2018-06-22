@@ -137,7 +137,6 @@ class SimpleSwitch13(app_manager.RyuApp):
                 print "\033[93m"+"ip dst not in arp table"+"\033[0m"             
                 return
             else:
-                self.arp_table.setdefault(arp_pkt.dst_ip, {})
                 dst = self.arp_table[arp_pkt.dst_ip]
                 if dst == None:
                     return
@@ -161,7 +160,6 @@ class SimpleSwitch13(app_manager.RyuApp):
                 print "\033[92m"+"IP: "+"\033[0m"+ip_pkt.src+"\033[92m"+" Eth: "+"\033[0m"+self.arp_table[ip_pkt.src]+"\033[92m"+" added"+"\033[0m"
                 return
             else:
-                self.arp_table.setdefault(ip_pkt.dst, {})
                 dst = self.arp_table[ip_pkt.dst]
                 if dst == None:
                     return
