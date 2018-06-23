@@ -29,7 +29,7 @@ from ryu.topology.api import get_switch, get_link
 import copy
 import networkx as nx
 import random
-
+from collections import defaultdict
 
 class Ecmp13(app_manager.RyuApp):
     OFP_VERSIONS = [ofproto_v1_3.OFP_VERSION]
@@ -42,7 +42,8 @@ class Ecmp13(app_manager.RyuApp):
         self.topology_api_app = self
         self.group_ids = []
         self.multipath_group_ids = {}
-    
+    	self.datapath_list = {}
+
     @set_ev_cls(ofp_event.EventOFPSwitchFeatures, CONFIG_DISPATCHER)
     def switch_features_handler(self, ev):
         datapath = ev.msg.datapath
@@ -93,22 +94,40 @@ class Ecmp13(app_manager.RyuApp):
         for path in paths:
             p = {}
             in_port = first_port
-            for s1, s2 in zip(path[:-1], path[1:]):
-                out_port = self.adjacency[s1][s2]
+            p[path[0]] = (first_port,first_port)
+            s1 = path[1]
+            s2 = path[2]
+            while s2 != path[len(path)-1]:
+            	#print s1
+            	#print s2
+            	out_port = self.net[s1][s2]['port']
                 p[s1] = (in_port, out_port)
-                in_port = self.adjacency[s2][s1]
-            p[path[-1]] = (in_port, last_port)
+                in_port = self.net[s2][s1]['port']
+                s1 = s2
+                s2 = path[path.index(s1)+1]
+            p[s1] = (in_port, last_port)
+            p[s2] = (last_port, last_port)
             paths_p.append(p)
+            #print paths_p
         return paths_p
 
+    def find_switches(self, paths, src, dst):
+        """
+        Find switches into the paths
+        """
+        switches_list = []
+        for path in paths:
+        	for s in path:
+        		if s != src and s != dst and s not in switches_list:
+        			switches_list.append(s)
+        return switches_list
+
+	
     def install_paths(self, src, first_port, dst, last_port, ip_src, ip_dst):
         paths = nx.all_shortest_paths(self.net, source=src, target=dst)
-        pw = 0
-        for path in paths:
-            pw+=1
         paths_with_ports = self.add_ports_to_paths(paths, first_port, last_port)
-        switches_in_paths = set().union(*paths)
-
+        paths = nx.all_shortest_paths(self.net, source=src, target=dst)
+        switches_in_paths = self.find_switches(paths, src, dst)
         for node in switches_in_paths:
 
             dp = self.datapath_list[node]
@@ -123,8 +142,8 @@ class Ecmp13(app_manager.RyuApp):
                 if node in path:
                     in_port = path[node][0]
                     out_port = path[node][1]
-                    if (out_port, pw[i]) not in ports[in_port]:
-                        ports[in_port].append((out_port, pw[i]))
+                    if out_port not in ports[in_port]:
+                        ports[in_port].append(out_port)
                 i += 1
 
             for in_port in ports:
@@ -147,22 +166,19 @@ class Ecmp13(app_manager.RyuApp):
                     group_id = None
                     group_new = False
 
-                    if (node, src, dst) not in self.multipath_group_ids:
+                    if (src, dst) not in self.multipath_group_ids:
                         group_new = True
-                        self.multipath_group_ids[
-                            node, src, dst] = self.generate_openflow_gid()
-                    group_id = self.multipath_group_ids[node, src, dst]
-
+                        self.multipath_group_ids[src, dst] = self.generate_openflow_gid()
+                    group_id = self.multipath_group_ids[src, dst]
+                    print group_id
                     buckets = []
                     # print "node at ",node," out ports : ",out_ports
-                    for port, weight in out_ports:
-                        bucket_weight = int(round((1 - weight/sum_of_pw) * 10))
+                    for port in out_ports:
+                        bucket_weight = int(round((1/i) * 10))
                         bucket_action = [ofp_parser.OFPActionOutput(port)]
                         buckets.append(
                             ofp_parser.OFPBucket(
                                 weight=bucket_weight,
-                                watch_port=port,
-                                watch_group=ofp.OFPG_ANY,
                                 actions=bucket_action
                             )
                         )
@@ -185,7 +201,7 @@ class Ecmp13(app_manager.RyuApp):
                     self.add_flow(dp, 1, match_arp, actions)
 
                 elif len(out_ports) == 1:
-                    actions = [ofp_parser.OFPActionOutput(out_ports[0][0])]
+                    actions = [ofp_parser.OFPActionOutput(out_ports[0])]
 
                     self.add_flow(dp, 32768, match_ip, actions)
                     self.add_flow(dp, 1, match_arp, actions)
@@ -230,7 +246,9 @@ class Ecmp13(app_manager.RyuApp):
             self.net.add_node(src)
             self.net.add_edges_from([(dpid,src,{'port':msg.match['in_port']})]) 
             self.net.add_edge(src,dpid)
-        
+                
+        out_port = ofproto.OFPP_FLOOD
+
         if arp_pkt==None and ip_pkt==None:
             print "\033[91m"+"exit Nonetype"+"\033[0m"
             return
@@ -241,6 +259,7 @@ class Ecmp13(app_manager.RyuApp):
             self.add_flow(datapath, 1, match, actions)
             print "\033[91m"+"IPv6"+"\033[0m"
             return None
+
 
         elif isinstance(arp_pkt, arp.arp):
             self.logger.debug("ARP processing")
@@ -259,11 +278,11 @@ class Ecmp13(app_manager.RyuApp):
                     return
                 if dst in self.net:
                     print "\033[94m"+"Eth dst in net"+"\033[0m"
-                    for pid in mac_to_port:
-                        if dst in mac_to_port[pid]:
+                    for pid in self.mac_to_port:
+                        if dst in self.mac_to_port[pid]:
                             dst_dpid = pid
-                    out_port = self.install_paths(src, mac_to_port[dpid][src], dst, mac_to_port[dst_dpid][dst], arp_pkt.src_ip, arp_pkt.dst_ip)
-                    self.install_paths(dst, mac_to_port[dst_dpid][dst], src, mac_to_port[dpid][src], arp_pkt.dst_ip, arp_pkt.src_ip) # reverse
+                    out_port = self.install_paths(src, self.mac_to_port[dpid][src], dst, self.mac_to_port[dst_dpid][dst], arp_pkt.src_ip, arp_pkt.dst_ip)
+                    self.install_paths(dst, self.mac_to_port[dst_dpid][dst], src, self.mac_to_port[dpid][src], arp_pkt.dst_ip, arp_pkt.src_ip) # reverse
                     
 
         actions = [parser.OFPActionOutput(out_port)]
@@ -280,7 +299,7 @@ class Ecmp13(app_manager.RyuApp):
 
     @set_ev_cls(event.EventSwitchEnter)
     def get_topology_data(self, ev):
-        switch_list = get_switch(self.topology_api_app, None)   
+        switch_list = get_switch(self.topology_api_app, None)  
         switches=[switch.dp.id for switch in switch_list]
         self.net.add_nodes_from(switches)
         links_list = get_link(self.topology_api_app, None)
@@ -288,4 +307,4 @@ class Ecmp13(app_manager.RyuApp):
         self.net.add_edges_from(links)
         links=[(link.dst.dpid,link.src.dpid,{'port':link.dst.port_no}) for link in links_list]
         self.net.add_edges_from(links)
- 
+        self.datapath_list[ev.switch.dp.id] = ev.switch.dp
