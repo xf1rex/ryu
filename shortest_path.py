@@ -104,7 +104,7 @@ class SimpleSwitch13(app_manager.RyuApp):
         dst = eth.dst
         src = eth.src
         print "Packet from " + "\033[92m" + "Eth src: " + "\033[0m" + src + " to " + "\033[92m" + "Eth dst: " + "\033[0m" + dst
-        print "Packet from " + "\033[92m" + "IP src: " + "\033[0m" + arp_pkt.src_ip + " to " + "\033[92m" + "IP dst: " + "\033[0m" + arp_pkt.dst_ip
+        #print "Packet from " + "\033[92m" + "IP src: " + "\033[0m" + arp_pkt.src_ip + " to " + "\033[92m" + "IP dst: " + "\033[0m" + arp_pkt.dst_ip
 
 
         dpid = datapath.id
@@ -137,6 +137,7 @@ class SimpleSwitch13(app_manager.RyuApp):
                 print "\033[93m"+"ip dst not in arp table"+"\033[0m"             
                 return
             else:
+                self.arp_table.setdefault(arp_pkt.dst_ip, {})
                 dst = self.arp_table[arp_pkt.dst_ip]
                 if dst == None:
                     return
@@ -148,7 +149,7 @@ class SimpleSwitch13(app_manager.RyuApp):
                     next=path[path.index(dpid)+1]
                     out_port=self.net[dpid][next]['port']
                 else:
-                    print "\033[91m"+"exit"+"\033[0m"
+                    print "\033[91m"+"exit dst not in net"+"\033[0m"
                     return
 
         elif isinstance(ip_pkt, ipv4.ipv4):
@@ -160,6 +161,7 @@ class SimpleSwitch13(app_manager.RyuApp):
                 print "\033[92m"+"IP: "+"\033[0m"+ip_pkt.src+"\033[92m"+" Eth: "+"\033[0m"+self.arp_table[ip_pkt.src]+"\033[92m"+" added"+"\033[0m"
                 return
             else:
+                self.arp_table.setdefault(ip_pkt.dst, {})
                 dst = self.arp_table[ip_pkt.dst]
                 if dst == None:
                     return
@@ -169,7 +171,7 @@ class SimpleSwitch13(app_manager.RyuApp):
                     next=path[path.index(dpid)+1]
                     out_port=self.net[dpid][next]['port']
                 else:
-                    print "\033[91m"+"exit"+"\033[0m"
+                    print "\033[91m"+"exit dest not in net"+"\033[0m"
                     return
         else:
             return
