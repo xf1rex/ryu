@@ -30,7 +30,7 @@ import copy
 import networkx as nx
 
 
-class SimpleSwitch13(app_manager.RyuApp):
+class ShortestPath13(app_manager.RyuApp):
     OFP_VERSIONS = [ofproto_v1_3.OFP_VERSION]
 
     def __init__(self, *args, **kwargs):
