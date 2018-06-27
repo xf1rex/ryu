@@ -1,0 +1,23 @@
+sudo ovs-vsctl set bridge s1001 protocols=OpenFlow13
+sudo ovs-vsctl set bridge s1002 protocols=OpenFlow13
+sudo ovs-vsctl set bridge s1003 protocols=OpenFlow13
+sudo ovs-vsctl set bridge s1004 protocols=OpenFlow13
+sudo ovs-vsctl set bridge s2001 protocols=OpenFlow13
+sudo ovs-vsctl set bridge s2002 protocols=OpenFlow13
+sudo ovs-vsctl set bridge s2003 protocols=OpenFlow13
+sudo ovs-vsctl set bridge s2004 protocols=OpenFlow13
+sudo ovs-vsctl set bridge s2005 protocols=OpenFlow13
+sudo ovs-vsctl set bridge s2006 protocols=OpenFlow13
+sudo ovs-vsctl set bridge s2007 protocols=OpenFlow13
+sudo ovs-vsctl set bridge s2008 protocols=OpenFlow13
+sudo ovs-vsctl set bridge s3001 protocols=OpenFlow13
+sudo ovs-vsctl set bridge s3002 protocols=OpenFlow13
+sudo ovs-vsctl set bridge s3003 protocols=OpenFlow13
+sudo ovs-vsctl set bridge s3004 protocols=OpenFlow13
+sudo ovs-vsctl set bridge s3005 protocols=OpenFlow13
+sudo ovs-vsctl set bridge s3006 protocols=OpenFlow13
+sudo ovs-vsctl set bridge s3007 protocols=OpenFlow13
+sudo ovs-vsctl set bridge s3008 protocols=OpenFlow13
+
+
+sudo mn --custom fattree.py --topo fattree,4 --mac --switch ovsk --controller=remote,ip=192.168.56.102,port=6633 --link tc,bw=100,delay=5ms
