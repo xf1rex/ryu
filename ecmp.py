@@ -178,7 +178,7 @@ class Ecmp13(app_manager.RyuApp):
                     buckets = []
                     # print "node at ",node," out ports : ",out_ports
                     for port in out_ports:
-                        bucket_weight = int(round((1/i) * 100))
+                        bucket_weight = int(round((1 * 100)/i))
                         bucket_action = [ofp_parser.OFPActionOutput(port=port)]
                         buckets.append(
                             ofp_parser.OFPBucket(
@@ -234,9 +234,6 @@ class Ecmp13(app_manager.RyuApp):
 
         dpid = datapath.id
 
-        buckets = []
-
-
         if eth.ethertype == ether_types.ETH_TYPE_LLDP:
             # ignore lldp packet
             return
@@ -250,11 +247,6 @@ class Ecmp13(app_manager.RyuApp):
         self.logger.debug("packet in %s %s %s %s", dpid, src, dst, in_port)
         self.mac_to_port[dpid][src] = in_port
 
-        if src not in self.net:
-            self.net.add_node(src)
-            self.net.add_edges_from([(dpid,src,{'port':msg.match['in_port']})]) 
-            self.net.add_edge(src,dpid)
-
         if isinstance(ip6_pkt, ipv6.ipv6):  # Drop the IPV6 Packets.
             match = parser.OFPMatch(eth_type=eth.ethertype)
             actions = []
@@ -263,8 +255,12 @@ class Ecmp13(app_manager.RyuApp):
             return None
         
 
-        if isinstance(arp_pkt, arp.arp):
+        elif isinstance(arp_pkt, arp.arp):
             self.logger.debug("ARP processing")
+            if src not in self.net:
+                self.net.add_node(src)
+                self.net.add_edges_from([(dpid, src, {'port':msg.match['in_port']})]) 
+                self.net.add_edge(src, dpid)
             self.arp_table.setdefault(arp_pkt.src_ip, {})
             if not eth.src in self.arp_table[arp_pkt.src_ip]:
                 print "\033[93m"+"ip src not in arp table"+"\033[0m"
@@ -274,7 +270,6 @@ class Ecmp13(app_manager.RyuApp):
                 print "\033[93m"+"ip dst not in arp table"+"\033[0m"             
                 return
             else:
-                mod = False
                 self.arp_table.setdefault(arp_pkt.dst_ip, {})
                 dst = self.arp_table[arp_pkt.dst_ip]
                 if dst == None:
@@ -285,10 +280,14 @@ class Ecmp13(app_manager.RyuApp):
                         if dst in self.mac_to_port[pid]:
                             dst_dpid = pid
                     out_port = self.install_paths(src, self.mac_to_port[dpid][src], dst, self.mac_to_port[dst_dpid][dst], arp_pkt.src_ip, arp_pkt.dst_ip)
-                    self.install_paths(dst, self.mac_to_port[dst_dpid][dst], src, self.mac_to_port[dpid][src], arp_pkt.dst_ip, arp_pkt.src_ip) # reverse
+                    #self.install_paths(dst, self.mac_to_port[dst_dpid][dst], src, self.mac_to_port[dpid][src], arp_pkt.dst_ip, arp_pkt.src_ip) # reverse
 
         elif isinstance(ip_pkt, ipv4.ipv4):
             self.logger.debug("IP processing")
+            if src not in self.net:
+                self.net.add_node(src)
+                self.net.add_edges_from([(dpid, src, {'port':msg.match['in_port']})]) 
+                self.net.add_edge(src, dpid)
             self.arp_table.setdefault(ip_pkt.src, {})
             if not eth.src in self.arp_table[ip_pkt.src]:
                 print "\033[93m"+"ip src not in arp table"+"\033[0m"
@@ -298,7 +297,6 @@ class Ecmp13(app_manager.RyuApp):
                 print "\033[93m"+"ip dst not in arp table"+"\033[0m"             
                 return
             else:
-                mod = False
                 self.arp_table.setdefault(ip_pkt.dst, {})
                 dst = self.arp_table[ip_pkt.dst]
                 if dst == None:
@@ -309,7 +307,7 @@ class Ecmp13(app_manager.RyuApp):
                         if dst in self.mac_to_port[pid]:
                             dst_dpid = pid
                     out_port = self.install_paths(src, self.mac_to_port[dpid][src], dst, self.mac_to_port[dst_dpid][dst], ip_pkt.src, ip_pkt.dst)
-                    self.install_paths(dst, self.mac_to_port[dst_dpid][dst], src, self.mac_to_port[dpid][src], ip_pkt.dst, ip_pkt.src) # reverse
+                    #self.install_paths(dst, self.mac_to_port[dst_dpid][dst], src, self.mac_to_port[dpid][src], ip_pkt.dst, ip_pkt.src) # reverse
         else:
             print "\033[91m"+"exit Nonetype"+"\033[0m"
             return
@@ -332,8 +330,8 @@ class Ecmp13(app_manager.RyuApp):
         switches=[switch.dp.id for switch in switch_list]
         self.net.add_nodes_from(switches)
         links_list = get_link(self.topology_api_app, None)
-        links=[(link.src.dpid,link.dst.dpid,{'port':link.src.port_no}) for link in links_list]
+        links=[(link.src.dpid, link.dst.dpid, {'port':link.src.port_no}) for link in links_list]
         self.net.add_edges_from(links)
-        links=[(link.dst.dpid,link.src.dpid,{'port':link.dst.port_no}) for link in links_list]
+        links=[(link.dst.dpid, link.src.dpid, {'port':link.dst.port_no}) for link in links_list]
         self.net.add_edges_from(links)
         self.datapath_list[ev.switch.dp.id] = ev.switch.dp
