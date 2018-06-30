@@ -1,3 +1,8 @@
+"""
+sudo mn --custom fattree.py --topo fattree,4 --mac --switch ovsk --controller=remote,ip=192.168.56.102,port=6633 
+--link tc,bw=100,delay=5ms
+"""
+
 from mininet.topo import Topo
 import logging
 import os
