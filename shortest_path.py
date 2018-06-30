@@ -1,4 +1,4 @@
-# Ryu's script tha implemento shortest path
+# Ryu's script that implement shortest path
 #
 # Refence:
 # https://github.com/osrg/ryu/blob/master/ryu/app/example_switch_13.py
