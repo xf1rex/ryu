@@ -1,4 +1,8 @@
-# Copyright (C) 2011 Nippon Telegraph and Telephone Corporation.
+# Ryu's script that implement the ecmp protocol.
+# 
+# Reference:
+# https://github.com/wildan2711/multipath/blob/master/ryu_multipath.py
+# https://github.com/osrg/ryu/blob/master/ryu/app/example_switch_13.py
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
