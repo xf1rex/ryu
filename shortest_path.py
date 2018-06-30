@@ -34,7 +34,7 @@ class ShortestPath13(app_manager.RyuApp):
     OFP_VERSIONS = [ofproto_v1_3.OFP_VERSION]
 
     def __init__(self, *args, **kwargs):
-        super(SimpleSwitch13, self).__init__(*args, **kwargs)
+        super(ShortestPath13, self).__init__(*args, **kwargs)
         self.mac_to_port = dict()
         self.arp_table = dict()
         self.net=nx.DiGraph()
