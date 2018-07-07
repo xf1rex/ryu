@@ -60,6 +60,15 @@ class ShortestPath13(app_manager.RyuApp):
                                           ofproto.OFPCML_NO_BUFFER)]
         self.add_flow(datapath, 0, match, actions)
 
+        switch_list = get_switch(self.topology_api_app, None)   
+        switches=[switch.dp.id for switch in switch_list]
+        self.net.add_nodes_from(switches)
+        links_list = get_link(self.topology_api_app, None)
+        links=[(link.src.dpid,link.dst.dpid,{'port':link.src.port_no}) for link in links_list]
+        self.net.add_edges_from(links)
+        links=[(link.dst.dpid,link.src.dpid,{'port':link.dst.port_no}) for link in links_list]
+        self.net.add_edges_from(links)
+
     
 
     def add_flow(self, datapath, priority, match, actions, buffer_id=None):
@@ -94,6 +103,7 @@ class ShortestPath13(app_manager.RyuApp):
 
         pkt = packet.Packet(msg.data)
         eth = pkt.get_protocols(ethernet.ethernet)[0]
+        
         if eth.ethertype == ether_types.ETH_TYPE_LLDP:
             # ignore lldp packet
             return
@@ -122,7 +132,7 @@ class ShortestPath13(app_manager.RyuApp):
             actions = []
             self.add_flow(datapath, 1, match, actions)
             print "\033[91m"+"IPv6"+"\033[0m"
-            return None        
+            return None
 
         elif isinstance(arp_pkt, arp.arp):
             self.logger.debug("ARP processing")
@@ -134,6 +144,10 @@ class ShortestPath13(app_manager.RyuApp):
             src_ip = ip_pkt.src
             dst_ip = ip_pkt.dst
 
+        else:
+            print "\033[91m"+"exit Nonetype"+"\033[0m"
+            return
+            
         print "Packet from " + "\033[92m" + "Eth src: " + "\033[0m" + src + " to " + "\033[92m" + "Eth dst: " + "\033[0m" + dst
         print "Packet from " + "\033[92m" + "IP src: " + "\033[0m" + src_ip + " to " + "\033[92m" + "IP dst: " + "\033[0m" + dst_ip
 
@@ -179,14 +193,3 @@ class ShortestPath13(app_manager.RyuApp):
         out = parser.OFPPacketOut(datapath=datapath, buffer_id=msg.buffer_id,
                                   in_port=in_port, actions=actions, data=data)
         datapath.send_msg(out)
-
-    @set_ev_cls(event.EventSwitchEnter)
-    def get_topology_data(self, ev):
-        switch_list = get_switch(self.topology_api_app, None)   
-        switches=[switch.dp.id for switch in switch_list]
-        self.net.add_nodes_from(switches)
-        links_list = get_link(self.topology_api_app, None)
-        links=[(link.src.dpid,link.dst.dpid,{'port':link.src.port_no}) for link in links_list]
-        self.net.add_edges_from(links)
-        links=[(link.dst.dpid,link.src.dpid,{'port':link.dst.port_no}) for link in links_list]
-        self.net.add_edges_from(links)
