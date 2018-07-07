@@ -159,16 +159,13 @@ class Ecmp13(app_manager.RyuApp):
                 return
             elif dst in self.net:
                 print "\033[94m"+"Eth dst in net"+"\033[0m"
-                for pid in self.mac_to_port:
-                    if dst in self.mac_to_port[pid]:
-                        dst_dpid = pid
                 if (src, dst) not in self.s_path:
                     paths = nx.all_shortest_paths(self.net, source=src, target=dst)
                     i=0
                     for path in paths:
                         i += 1
                     paths = nx.all_shortest_paths(self.net, source=src, target=dst)
-                    n = random.randint(0, (i-1))
+                    n = random.randint(1, i)
                     i=0
                     for path in paths:
                         i += 1
@@ -191,13 +188,21 @@ class Ecmp13(app_manager.RyuApp):
 
         actions = [parser.OFPActionOutput(out_port)]
 
+
+        match = parser.OFPMatch(in_port=in_port, eth_dst=dst, eth_src=src)
+        # verify if we have a valid buffer_id, if yes avoid to send both
+        # flow_mod & packet_out
+        if msg.buffer_id != ofproto.OFP_NO_BUFFER:
+            self.add_flow(datapath, 1, match, actions, msg.buffer_id)
+            return
+        else:
+            self.add_flow(datapath, 1, match, actions)
         data = None
         if msg.buffer_id == ofproto.OFP_NO_BUFFER:
             data = msg.data
 
-        out = parser.OFPPacketOut(
-            datapath=datapath, buffer_id=msg.buffer_id, in_port=in_port,
-            actions=actions, data=data)
+        out = parser.OFPPacketOut(datapath=datapath, buffer_id=msg.buffer_id,
+                                  in_port=in_port, actions=actions, data=data)
         datapath.send_msg(out)
 
     @set_ev_cls(event.EventSwitchEnter)
