@@ -40,7 +40,6 @@ class Ecmp13(app_manager.RyuApp):
         self.arp_table = dict()
         self.net=nx.DiGraph()
         self.topology_api_app = self
-        self.datapath_list = {}
         self.s_path = {}
 
     @set_ev_cls(ofp_event.EventOFPSwitchFeatures, CONFIG_DISPATCHER)
@@ -207,10 +206,6 @@ class Ecmp13(app_manager.RyuApp):
 
     @set_ev_cls(event.EventSwitchEnter)
     def get_topology_data(self, ev):
-        self.datapath_list[ev.switch.dp.id] = ev.switch.dp
-
-    @set_ev_cls(event.EventSwitchEnter)
-    def get_topology_data(self, ev):
         switch_list = get_switch(self.topology_api_app, None)  
         switches=[switch.dp.id for switch in switch_list]
         self.net.add_nodes_from(switches)
@@ -219,4 +214,3 @@ class Ecmp13(app_manager.RyuApp):
         self.net.add_edges_from(links)
         links=[(link.dst.dpid, link.src.dpid, {'port':link.dst.port_no}) for link in links_list]
         self.net.add_edges_from(links)
-        self.datapath_list[ev.switch.dp.id] = ev.switch.dp
