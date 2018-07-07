@@ -62,17 +62,6 @@ class Ecmp13(app_manager.RyuApp):
                                           ofproto.OFPCML_NO_BUFFER)]
         self.add_flow(datapath, 0, match, actions)
 
-        switch_list = get_switch(self.topology_api_app, None)   
-        switches=[switch.dp.id for switch in switch_list]
-        self.net.add_nodes_from(switches)
-        links_list = get_link(self.topology_api_app, None)
-        links=[(link.src.dpid,link.dst.dpid,{'port':link.src.port_no}) for link in links_list]
-        self.net.add_edges_from(links)
-        links=[(link.dst.dpid,link.src.dpid,{'port':link.dst.port_no}) for link in links_list]
-        self.net.add_edges_from(links)
-
-    
-
     def add_flow(self, datapath, priority, match, actions, buffer_id=None):
         ofproto = datapath.ofproto
         parser = datapath.ofproto_parser
@@ -257,6 +246,7 @@ class Ecmp13(app_manager.RyuApp):
 
         self.mac_to_port[dpid][src] = in_port
 
+
         if src not in self.net:
             self.net.add_node(src)
             self.net.add_edges_from([(dpid,src,{'port':msg.match['in_port']})]) 
@@ -267,7 +257,7 @@ class Ecmp13(app_manager.RyuApp):
             actions = []
             self.add_flow(datapath, 1, match, actions)
             print "\033[91m"+"IPv6"+"\033[0m"
-            return None        
+            return     
 
         elif isinstance(arp_pkt, arp.arp):
             self.logger.debug("ARP processing")
@@ -279,10 +269,6 @@ class Ecmp13(app_manager.RyuApp):
             self.logger.debug("IPV4 processing")
             src_ip = ip_pkt.src
             dst_ip = ip_pkt.dst
-            if src not in self.net:
-                self.net.add_node(src)
-                self.net.add_edges_from([(dpid,src,{'port':msg.match['in_port']})]) 
-                self.net.add_edge(src,dpid)
 
         else:
             print "\033[91m"+"exit Nonetype"+"\033[0m"
@@ -332,3 +318,19 @@ class Ecmp13(app_manager.RyuApp):
             datapath=datapath, buffer_id=msg.buffer_id, in_port=in_port,
             actions=actions, data=data)
         datapath.send_msg(out)
+
+    @set_ev_cls(event.EventSwitchEnter)
+    def get_topology_data(self, ev):
+        self.datapath_list[ev.switch.dp.id] = ev.switch.dp
+
+    @set_ev_cls(event.EventSwitchEnter)
+    def get_topology_data(self, ev):
+        switch_list = get_switch(self.topology_api_app, None)  
+        switches=[switch.dp.id for switch in switch_list]
+        self.net.add_nodes_from(switches)
+        links_list = get_link(self.topology_api_app, None)
+        links=[(link.src.dpid, link.dst.dpid, {'port':link.src.port_no}) for link in links_list]
+        self.net.add_edges_from(links)
+        links=[(link.dst.dpid, link.src.dpid, {'port':link.dst.port_no}) for link in links_list]
+        self.net.add_edges_from(links)
+        self.datapath_list[ev.switch.dp.id] = ev.switch.dp
