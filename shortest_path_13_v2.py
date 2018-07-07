@@ -60,15 +60,6 @@ class ShortestPath13(app_manager.RyuApp):
                                           ofproto.OFPCML_NO_BUFFER)]
         self.add_flow(datapath, 0, match, actions)
 
-        switch_list = get_switch(self.topology_api_app, None)   
-        switches=[switch.dp.id for switch in switch_list]
-        self.net.add_nodes_from(switches)
-        links_list = get_link(self.topology_api_app, None)
-        links=[(link.src.dpid,link.dst.dpid,{'port':link.src.port_no}) for link in links_list]
-        self.net.add_edges_from(links)
-        links=[(link.dst.dpid,link.src.dpid,{'port':link.dst.port_no}) for link in links_list]
-        self.net.add_edges_from(links)
-
     
 
     def add_flow(self, datapath, priority, match, actions, buffer_id=None):
@@ -86,7 +77,6 @@ class ShortestPath13(app_manager.RyuApp):
                                     match=match, instructions=inst)
         datapath.send_msg(mod)
 
-        
 
     @set_ev_cls(ofp_event.EventOFPPacketIn, MAIN_DISPATCHER)
     def _packet_in_handler(self, ev):
@@ -152,19 +142,19 @@ class ShortestPath13(app_manager.RyuApp):
         print "Packet from " + "\033[92m" + "IP src: " + "\033[0m" + src_ip + " to " + "\033[92m" + "IP dst: " + "\033[0m" + dst_ip
 
         self.arp_table.setdefault(src_ip, {})
-        if not eth.src in self.arp_table[src_ip]:
-            print "\033[93m"+"ip src not in arp table"+"\033[0m"
+        if not src in self.arp_table[src_ip]:
+            print "\033[93m"+"eth src not in arp table"+"\033[0m"
             self.arp_table[src_ip] = src
             print "\033[92m"+"IP: "+"\033[0m"+src_ip+"\033[92m"+" Eth: "+"\033[0m"+self.arp_table[src_ip]+"\033[92m"+" added"+"\033[0m"
+        
         if not dst_ip in self.arp_table:
             print "\033[93m"+"ip dst not in arp table"+"\033[0m"             
             return
         else:
-            self.arp_table.setdefault(dst_ip, {})
             dst = self.arp_table[dst_ip]
             if dst == None:
                 return
-            if dst in self.net:
+            elif dst in self.net:
                 print "\033[94m"+"Eth dst in net"+"\033[0m"
                 path=nx.shortest_path(self.net, source=src, target=dst)
                 print "\033[95m"+"Path"+"\033[0m"
@@ -193,3 +183,14 @@ class ShortestPath13(app_manager.RyuApp):
         out = parser.OFPPacketOut(datapath=datapath, buffer_id=msg.buffer_id,
                                   in_port=in_port, actions=actions, data=data)
         datapath.send_msg(out)
+
+    @set_ev_cls(event.EventSwitchEnter)
+    def get_topology_data(self, ev):
+        switch_list = get_switch(self.topology_api_app, None)   
+        switches=[switch.dp.id for switch in switch_list]
+        self.net.add_nodes_from(switches)
+        links_list = get_link(self.topology_api_app, None)
+        links=[(link.src.dpid,link.dst.dpid,{'port':link.src.port_no}) for link in links_list]
+        self.net.add_edges_from(links)
+        links=[(link.dst.dpid,link.src.dpid,{'port':link.dst.port_no}) for link in links_list]
+        self.net.add_edges_from(links)
