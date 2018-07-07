@@ -62,6 +62,15 @@ class Ecmp13(app_manager.RyuApp):
                                           ofproto.OFPCML_NO_BUFFER)]
         self.add_flow(datapath, 0, match, actions)
 
+        switch_list = get_switch(self.topology_api_app, None)   
+        switches=[switch.dp.id for switch in switch_list]
+        self.net.add_nodes_from(switches)
+        links_list = get_link(self.topology_api_app, None)
+        links=[(link.src.dpid,link.dst.dpid,{'port':link.src.port_no}) for link in links_list]
+        self.net.add_edges_from(links)
+        links=[(link.dst.dpid,link.src.dpid,{'port':link.dst.port_no}) for link in links_list]
+        self.net.add_edges_from(links)
+
     
 
     def add_flow(self, datapath, priority, match, actions, buffer_id=None):
@@ -201,14 +210,14 @@ class Ecmp13(app_manager.RyuApp):
 
                     actions = [ofp_parser.OFPActionGroup(group_id)]
 
-                    self.add_flow(dp, 32768, match_ip, actions)
+                    self.add_flow(dp, 1, match_ip, actions)
                     self.add_flow(dp, 1, match_arp, actions)
 
 
                 elif len(out_ports) == 1:
                     actions = [ofp_parser.OFPActionOutput(out_ports[0])]
 
-                    self.add_flow(dp, 32768, match_ip, actions)
+                    self.add_flow(dp, 1, match_ip, actions)
                     self.add_flow(dp, 1, match_arp, actions)
 
         return paths_with_ports[0][src][1]
@@ -248,6 +257,11 @@ class Ecmp13(app_manager.RyuApp):
 
         self.mac_to_port[dpid][src] = in_port
 
+        if src not in self.net:
+            self.net.add_node(src)
+            self.net.add_edges_from([(dpid,src,{'port':msg.match['in_port']})]) 
+            self.net.add_edge(src,dpid)
+
         if isinstance(ip_pkt_6, ipv6.ipv6):  # Drop the IPV6 Packets.
             match = parser.OFPMatch(eth_type=eth.ethertype)
             actions = []
@@ -259,10 +273,7 @@ class Ecmp13(app_manager.RyuApp):
             self.logger.debug("ARP processing")
             src_ip = arp_pkt.src_ip
             dst_ip = arp_pkt.dst_ip
-            if src not in self.net:
-                self.net.add_node(src)
-                self.net.add_edges_from([(dpid,src,{'port':msg.match['in_port']})]) 
-                self.net.add_edge(src,dpid)
+
 
         elif isinstance(ip_pkt, ipv4.ipv4):
             self.logger.debug("IPV4 processing")
@@ -321,16 +332,3 @@ class Ecmp13(app_manager.RyuApp):
             datapath=datapath, buffer_id=msg.buffer_id, in_port=in_port,
             actions=actions, data=data)
         datapath.send_msg(out)
-
-
-    @set_ev_cls(event.EventSwitchEnter)
-    def get_topology_data(self, ev):
-        switch_list = get_switch(self.topology_api_app, None)  
-        switches=[switch.dp.id for switch in switch_list]
-        self.net.add_nodes_from(switches)
-        links_list = get_link(self.topology_api_app, None)
-        links=[(link.src.dpid, link.dst.dpid, {'port':link.src.port_no}) for link in links_list]
-        self.net.add_edges_from(links)
-        links=[(link.dst.dpid, link.src.dpid, {'port':link.dst.port_no}) for link in links_list]
-        self.net.add_edges_from(links)
-        self.datapath_list[ev.switch.dp.id] = ev.switch.dp
