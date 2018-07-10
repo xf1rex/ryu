@@ -1,4 +1,4 @@
-# Shortest path and ecmp protocols implementation to ryu
+# Shortest path and ecmp protocols implementation for ryu
 
 In order to test the ryu's implementation of shortest path protocol and ecmp protocol it's necessary to run the mininet topology script and then eun the scrip for ryu.
 
