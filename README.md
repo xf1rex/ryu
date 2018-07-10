@@ -18,7 +18,7 @@ ryu-manager --observe-links script.py
 ```
 
 ### Mac Learnig
-After runned the mininet topology and the ryu script, the controller need to learn the mac address of the hosts into the network, for this reason it's necessary to exe a pingall command into the mininet CLI.
+After running the mininet topology and the ryu script, the controller need to learn the mac address of the hosts into the network, for this reason it's necessary to exe a pingall command into the mininet CLI.
 
 ```
 pingall
