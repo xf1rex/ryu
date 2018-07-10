@@ -12,6 +12,9 @@
 # implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+# Before run the topology and then the controller script
+# When a packet arrived from a switch, the controller script calculate all shortest paths 
+# between the source and the destination and then randomly choose one of thats. 
 
 from ryu.base import app_manager
 from ryu.controller import ofp_event
