@@ -12,7 +12,7 @@
 # implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-# Before run the topology and then the controller's script
+# Before run the topology and then the controller script
 
 from ryu.base import app_manager
 from ryu.controller import ofp_event
